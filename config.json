@@ -814,5 +814,59 @@
         "binary": "Contents/Resources/wechat.dylib"
       }
     ]
+  },
+  {
+    "version": "269335",
+    "targets": [
+      {
+        "identifier": "revoke",
+        "entries": [
+          {
+            "arch": "x86_64",
+            "addr": "4D335A0",
+            "asm": "B801000000C3"
+          }
+        ],
+        "binary": "Contents/Resources/wechat.dylib"
+      },
+      {
+        "identifier": "multiInstance",
+        "entries": [
+          {
+            "arch": "x86_64",
+            "addr": "2F1738",
+            "asm": "909090909090"
+          }
+        ],
+        "binary": "Contents/Resources/wechat.dylib"
+      }
+    ]
+  },
+  {
+    "version": "269337",
+    "targets": [
+      {
+        "identifier": "revoke",
+        "entries": [
+          {
+            "arch": "x86_64",
+            "addr": "4D335A0",
+            "asm": "B801000000C3"
+          }
+        ],
+        "binary": "Contents/Resources/wechat.dylib"
+      },
+      {
+        "identifier": "multiInstance",
+        "entries": [
+          {
+            "arch": "x86_64",
+            "addr": "2F1738",
+            "asm": "909090909090"
+          }
+        ],
+        "binary": "Contents/Resources/wechat.dylib"
+      }
+    ]
   }
 ]

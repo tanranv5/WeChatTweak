@@ -65,7 +65,7 @@ make build
 
 ## 最新适配
 
-- `WeChat.app (4.1.12 / 269365)` 当前最新
+- `WeChat.app (4.1.13 / 269578)` 当前最新
 - 历史版本下载：https://github.com/canc3s/wechat-versions/releases
 
 ## 参考

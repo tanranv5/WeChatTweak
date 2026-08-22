@@ -998,11 +998,6 @@
             "arch": "x86_64",
             "addr": "302578",
             "asm": "909090909090"
-          },
-          {
-            "arch": "x86_64",
-            "addr": "302597",
-            "asm": "909090909090"
           }
         ],
         "binary": "Contents/Resources/wechat.dylib"

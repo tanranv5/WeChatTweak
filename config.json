@@ -1005,14 +1005,14 @@
     ]
   },
   {
-    "version": "269579",
+    "version": "269629",
     "targets": [
       {
         "identifier": "revoke",
         "entries": [
           {
             "arch": "x86_64",
-            "addr": "50C5990",
+            "addr": "512BE50",
             "asm": "B801000000C3"
           }
         ],
@@ -1023,7 +1023,7 @@
         "entries": [
           {
             "arch": "x86_64",
-            "addr": "302578",
+            "addr": "301DB8",
             "asm": "909090909090"
           }
         ],

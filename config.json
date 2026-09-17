@@ -1084,5 +1084,43 @@
         "binary": "Contents/Resources/wechat.dylib"
       }
     ]
+  },
+  {
+    "version": "270098",
+    "targets": [
+      {
+        "identifier": "wcdyIntegrityBypass",
+        "entries": [
+          {
+            "arch": "x86_64",
+            "addr": "8E03B",
+            "asm": "E93200000090"
+          }
+        ],
+        "binary": "Contents/Frameworks/ld/WCDYWrapper.framework/Versions/A/WCDYWrapper"
+      },
+      {
+        "identifier": "revoke",
+        "entries": [
+          {
+            "arch": "x86_64",
+            "addr": "537DAD0",
+            "asm": "B801000000C3"
+          }
+        ],
+        "binary": "Contents/Resources/wechat.dylib"
+      },
+      {
+        "identifier": "multiInstance",
+        "entries": [
+          {
+            "arch": "x86_64",
+            "addr": "2FB2A8",
+            "asm": "909090909090"
+          }
+        ],
+        "binary": "Contents/Resources/wechat.dylib"
+      }
+    ]
   }
 ]

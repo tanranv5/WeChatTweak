@@ -33,12 +33,15 @@ brew uninstall sunnyyoung/tap/wechattweak || brew uninstall wechattweak
 # 安装
 brew install tanranv5/tap/wechattweak
 
-# 更新
+# 更新（微信升级后建议执行，见下一节）
 brew upgrade tanranv5/tap/wechattweak
 
-# 执行 Patch（默认使用 tanranv5/WeChatTweak 的 config.json）
+# 执行 Patch（默认目标是 /Applications/WeChat.app）
 wechattweak patch
 
+# 若你的微信 bundle 名不是 WeChat.app（部分客户端是 wx.app），显式指定：
+#   ls -d /Applications/*.app | grep -i wechat   # 先确认名字
+wechattweak patch --app /Applications/wx.app
 
 # 显式指定 tanranv5 仓库的 config.json
 wechattweak patch -c https://raw.githubusercontent.com/tanranv5/WeChatTweak/refs/heads/master/config.json
@@ -46,9 +49,21 @@ wechattweak patch -c https://raw.githubusercontent.com/tanranv5/WeChatTweak/refs
 #多开
 open -n /Applications/WeChat.app
 
-# 查看所有支持的 WeChat 版本
+# 查看当前 WeChat 版本 + 支持列表
 wechattweak versions
 ```
+
+### 微信更新后怎么办
+
+微信自动更新会**覆盖已打的补丁**，所以每次微信升级后都要重新打一遍：
+
+1. 确认当前版本是否已支持：`wechattweak versions`
+2. **建议先更新工具**：`brew upgrade tanranv5/tap/wechattweak`
+   - 补丁配置（`config.json`）是**运行时从远端拉取**的，所以多数情况下不更新工具也能适配新版本；
+   - 但更新工具能让重签名更规范（保留 app 沙盒、嵌套二进制签名自洽），也可能带来对新版本的必要支持，**推荐顺手更新**。
+3. 重新打补丁：`wechattweak patch`（默认目标是 `/Applications/WeChat.app`，bundle 名不同时加 `--app`）
+
+> 打补丁前无需退出微信，但打完后要**重启微信**才生效（建议先退出，避免归档写入期间文件被占用）。
 
 ### 不切换 brew 时的手工打包方式
 
@@ -60,12 +75,12 @@ cd WeChatTweak
 make build
 
 # 使用本地构建产物
-./wechattweak patch  -c ./config.json
+./wechattweak patch -c ./config.json
 ```
 
 ## 最新适配
 
-- `WeChat.app (4.1.13 / 269578)` 当前最新
+- `wx.app (4.1.15 / 270098)` 当前最新
 - 历史版本下载：https://github.com/canc3s/wechat-versions/releases
 
 ## 参考

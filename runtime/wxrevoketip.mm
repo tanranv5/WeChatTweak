@@ -407,6 +407,19 @@ static bool is_revoke_msg(void* msg) {
     return memcmp(raw + 1, "revokemsg", 9) == 0;
 }
 
+// 「自己撤回」识别：原生提示/XML 以「你撤回/你收回/你回收/You recalled」开头或包含该片段。
+// 自己撤回必须完全交给原生（原消息正常移除 + 原生提示），不能清 newmsgid、不能加标记。
+// ⚠️ 这是文案启发式、不是身份校验：若对方昵称恰好含这些词，可能误判为自己撤回而跳过。
+//    与 fzlzjerry/wechat-antirecall PR#71 的做法一致（独立验证过 269630 x86_64）。
+static bool contains_self_recall(const std::string& s) {
+    static const char* kSelf[] = {"你撤回", "你收回", "你回收",
+                                  "You recalled", "you recalled"};
+    for (const char* p : kSelf) {
+        if (s.find(p) != std::string::npos) return true;
+    }
+    return false;
+}
+
 
 // 从原生提示 ""坦然" 撤回了一条消息" 里提取发送者（引号内名字）
 static std::string extract_from(const std::string& nativeTip) {
@@ -474,6 +487,7 @@ static bool wrapper(void* msg, void* in, void* flagOut) {
     // 进 parser 前 msg+0x1D0 是原始 sysmsg XML（回调刚拷进来的）。
     // 本线程此刻持有该对象，读它是安全的。提取 <session>（会话 wxid，join 键）。
     std::string xmlSession;
+    bool xmlSelfRecall = false;
     {
         std::string xml = read_long_or_sso(
             reinterpret_cast<char*>(msg) + g_offReplaceMsg);
@@ -484,11 +498,13 @@ static bool wrapper(void* msg, void* in, void* flagOut) {
                 size_t e = xml.find('<', p);
                 if (e != std::string::npos && e > p) xmlSession = xml.substr(p, e - p);
             }
+            xmlSelfRecall = contains_self_recall(xml);
             // 诊断：前 3 次打印
             static int s_xmlDumps = 0;
             if (s_xmlDumps < 3) {
                 s_xmlDumps++;
-                logline("XML#%d session=%s", s_xmlDumps, xmlSession.c_str());
+                logline("XML#%d session=%s self=%d", s_xmlDumps, xmlSession.c_str(),
+                        (int)xmlSelfRecall);
             }
         }
     }
@@ -503,12 +519,19 @@ static bool wrapper(void* msg, void* in, void* flagOut) {
         return ret;
     }
 
-    if (!verbose) return ret;
+    // ★ 自己撤回：完全交给原生（原消息正常移除 + 原生提示），不清 newmsgid、不加标记。
+    //   必须在清 newmsgid 之前判断，否则自己撤回的消息反而会被留在列表里。
+    if (xmlSelfRecall ||
+        contains_self_recall(read_long_or_sso(
+            reinterpret_cast<char*>(msg) + g_offReplaceMsg))) {
+        logline("parser#%d 自己撤回，跳过（保持原生移除 + 原生提示）", callno);
+        return ret;
+    }
 
     uint64_t newmsgidOut = 0;
     bool haveNewOut = field_u64(msg, g_offNewMsgId, &newmsgidOut);
 
-    logline("parser#%d ret=%d flag=%u session=%s newmsgid=%s", callno, (int)ret, flag,
+    if (verbose) logline("parser#%d ret=%d flag=%u session=%s newmsgid=%s", callno, (int)ret, flag,
             xmlSession.empty() ? "-" : xmlSession.c_str(),
             haveNewOut ? std::to_string(newmsgidOut).c_str() : "--");
 

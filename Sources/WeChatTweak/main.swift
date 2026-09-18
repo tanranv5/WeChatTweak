@@ -34,6 +34,19 @@ extension Tweak {
         @OptionGroup
         var options: Tweak.Options
 
+        @Flag(
+            name: .long,
+            help: "Install revoke-tip runtime component (shows [intercepted] tip with original message)"
+        )
+        var tip: Bool = false
+
+        @Option(
+            name: .long,
+            help: "Custom tip template. Placeholders: {from} {time} {content} {marker}",
+            completion: .file()
+        )
+        var tipTemplate: String = "[已拦截] {from} 撤回了：{content}"
+
         mutating func run() async throws {
             print("------ Version ------")
             let version = try await Command.version(app: options.app)
@@ -51,6 +64,15 @@ extension Tweak {
                 config: config
             )
             print("Done!")
+
+            if tip {
+                print("------ Revoke Tip Runtime ------")
+                try await Command.installTipRuntime(
+                    app: options.app,
+                    template: tipTemplate
+                )
+                print("Done! (reboot WeChat to take effect; log at container Data/wxrevoketip.log)")
+            }
 
             print("------ Resign ------")
             try await Command.resign(
@@ -71,6 +93,7 @@ struct Tweak: AsyncParsableCommand {
         case invalidConfig
         case invalidVersion
         case unsupportedVersion
+        case runtimeDylibNotFound
 
         var errorDescription: String? {
             switch self {
@@ -82,6 +105,8 @@ struct Tweak: AsyncParsableCommand {
                 return "Invalid app version"
             case .unsupportedVersion:
                 return "Unsupported WeChat version"
+            case .runtimeDylibNotFound:
+                return "libwxrevoketip.dylib / add_load_dylib.py not found (build with: cd runtime && ./build.sh)"
             }
         }
     }

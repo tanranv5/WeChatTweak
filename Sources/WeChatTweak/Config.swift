@@ -27,16 +27,62 @@ struct Config: Decodable {
         let arch: Arch
         let addr: UInt64
         let asm: Data
+        /// 可选特征码（hex，支持 `??` 通配）：优先用它在切片里定位补丁点；
+        /// 命中唯一时覆盖 addr，命中 0/多 次则回退 addr（再由 expected 校验）。
+        let sig: Data?
+        let sigMask: Data?
+        /// 可选：写入前校验目标处原始字节，不匹配则跳过（防止版本漂移后打错位置）。
+        let expected: Data?
 
         private enum CodingKeys: CodingKey {
             case arch
             case addr
             case asm
+            case sig
+            case expected
+        }
+
+        /// 解析 "5548??e5" 形式 → (bytes, mask)，mask 0xFF=精确、0x00=通配
+        static func parseSig(_ s: String) -> (Data, Data)? {
+            let hex = s.replacingOccurrences(of: " ", with: "").replacingOccurrences(of: "\n", with: "")
+            guard hex.count % 2 == 0, !hex.isEmpty else { return nil }
+            var bytes = Data(), mask = Data()
+            var idx = hex.startIndex
+            while idx < hex.endIndex {
+                let end = hex.index(idx, offsetBy: 2)
+                let pair = String(hex[idx..<end])
+                if pair == "??" {
+                    bytes.append(0); mask.append(0)
+                } else {
+                    guard let v = UInt8(pair, radix: 16) else { return nil }
+                    bytes.append(v); mask.append(0xFF)
+                }
+                idx = end
+            }
+            return (bytes, mask)
         }
 
         init(from decoder: any Decoder) throws {
             let container: KeyedDecodingContainer<CodingKeys> = try decoder.container(keyedBy: CodingKeys.self)
             self.arch = try container.decode(Arch.self, forKey: .arch)
+            if let sigHex = try container.decodeIfPresent(String.self, forKey: .sig) {
+                guard let (b, m) = Entry.parseSig(sigHex) else {
+                    throw DecodingError.dataCorruptedError(forKey: .sig, in: container,
+                                                           debugDescription: "Invalid Entry.sig")
+                }
+                self.sig = b; self.sigMask = m
+            } else {
+                self.sig = nil; self.sigMask = nil
+            }
+            if let expHex = try container.decodeIfPresent(String.self, forKey: .expected) {
+                guard let d = Data(hex: expHex) else {
+                    throw DecodingError.dataCorruptedError(forKey: .expected, in: container,
+                                                           debugDescription: "Invalid Entry.expected")
+                }
+                self.expected = d
+            } else {
+                self.expected = nil
+            }
             self.addr = try {
                 let hex = try container.decode(String.self, forKey: .addr)
                 guard let value = UInt64(hex, radix: 16) else {

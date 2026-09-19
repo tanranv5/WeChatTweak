@@ -25,6 +25,9 @@ struct Patcher {
         let entries = config.targets.flatMap { $0.entries }
         guard !entries.isEmpty else { throw Error.noArchMatched }
 
+        // 整文件映射读一遍：特征码扫描需要随机访问切片字节
+        let fileData = try Data(contentsOf: binary, options: .mappedIfSafe)
+
         let fh = try FileHandle(forUpdating: binary)
         defer { try? fh.close() }
 
@@ -45,7 +48,7 @@ struct Patcher {
             let nfat = isSwappedFat ? UInt32(littleEndian: rawNfat) : UInt32(bigEndian: rawNfat)
 
             // 先读完 fat_arch 表，避免 patch 时移动文件指针影响后续读取
-            var archEntries: [(cputype: UInt32, offset: UInt32)] = []
+            var archEntries: [(cputype: UInt32, offset: UInt32, size: UInt32)] = []
 
             for _ in 0..<nfat {
                 // fat_arch: cputype(4) cpusub(4) offset(4) size(4) align(4) big-endian
@@ -54,18 +57,27 @@ struct Patcher {
                 }
                 let rawCpu = archData.withUnsafeBytes { $0.load(fromByteOffset: 0, as: UInt32.self) }
                 let rawOff = archData.withUnsafeBytes { $0.load(fromByteOffset: 8, as: UInt32.self) }
+                let rawSize = archData.withUnsafeBytes { $0.load(fromByteOffset: 12, as: UInt32.self) }
                 let cputype = isSwappedFat ? UInt32(littleEndian: rawCpu) : UInt32(bigEndian: rawCpu)
                 let offset  = isSwappedFat ? UInt32(littleEndian: rawOff) : UInt32(bigEndian: rawOff)
-                archEntries.append((cputype, offset))
+                let size    = isSwappedFat ? UInt32(littleEndian: rawSize) : UInt32(bigEndian: rawSize)
+                archEntries.append((cputype, offset, size))
             }
 
             for entry in archEntries {
                 let matching = entries.filter { $0.arch.cpu == entry.cputype }
+                let sliceVMAddr = sliceBaseVMAddr(fileData: fileData, sliceOffset: UInt64(entry.offset))
                 for target in matching {
+                    let va = resolveVA(target, sliceVMAddr: sliceVMAddr,
+                                       sliceOffset: UInt64(entry.offset),
+                                       sliceSize: UInt64(entry.size),
+                                       fileData: fileData,
+                                       archName: target.arch.rawValue)
                     try patchOneSlice(file: fh,
                                       sliceOffset: UInt64(entry.offset),
-                                      targetVA: target.addr,
+                                      targetVA: va,
                                       patch: target.asm,
+                                      expected: target.expected,
                                       archName: target.arch.rawValue)
                     patchedCount += 1
                 }
@@ -88,11 +100,17 @@ struct Patcher {
                 throw Error.noArchMatched
             }
 
+            let fileSize = (try? FileManager.default.attributesOfItem(atPath: binary.path)[.size] as? NSNumber)??.uint64Value ?? 0
+            let sliceVMAddr = sliceBaseVMAddr(fileData: fileData, sliceOffset: 0)
             for target in matching {
+                let va = resolveVA(target, sliceVMAddr: sliceVMAddr,
+                                   sliceOffset: 0, sliceSize: fileSize,
+                                   fileData: fileData, archName: target.arch.rawValue)
                 try patchOneSlice(file: fh,
                                   sliceOffset: 0,
-                                  targetVA: target.addr,
+                                  targetVA: va,
                                   patch: target.asm,
+                                  expected: target.expected,
                                   archName: target.arch.rawValue)
                 patchedCount += 1
             }
@@ -103,10 +121,92 @@ struct Patcher {
         }
     }
 
+    // MARK: - 特征码定位
+
+    /// 切片基址 vmaddr（取 fileoff==0 的段，通常是 __TEXT）
+    private static func sliceBaseVMAddr(fileData: Data, sliceOffset: UInt64) -> UInt64 {
+        guard sliceOffset + 32 <= UInt64(fileData.count) else { return 0 }
+        let ncmds = fileData.withUnsafeBytes {
+            $0.load(fromByteOffset: Int(sliceOffset) + 16, as: UInt32.self).littleEndian
+        }
+        var o = Int(sliceOffset) + 32
+        for _ in 0..<ncmds {
+            guard o + 8 <= fileData.count else { break }
+            let (cmd, cmdsize) = fileData.withUnsafeBytes {
+                ($0.load(fromByteOffset: o, as: UInt32.self).littleEndian,
+                 $0.load(fromByteOffset: o + 4, as: UInt32.self).littleEndian)
+            }
+            if cmd == LC_SEGMENT_64, o + 32 <= fileData.count {
+                let vmaddr = fileData.withUnsafeBytes { $0.load(fromByteOffset: o + 24, as: UInt64.self).littleEndian }
+                let fileoff = fileData.withUnsafeBytes { $0.load(fromByteOffset: o + 40, as: UInt64.self).littleEndian }
+                if fileoff == 0 { return vmaddr }
+            }
+            o += Int(cmdsize)
+        }
+        return 0
+    }
+
+    /// 解析补丁点 VA：有特征码则优先用特征码（要求唯一命中），否则回退 addr
+    private static func resolveVA(_ e: Config.Entry,
+                                  sliceVMAddr: UInt64,
+                                  sliceOffset: UInt64,
+                                  sliceSize: UInt64,
+                                  fileData: Data,
+                                  archName: String) -> UInt64 {
+        guard let sig = e.sig, let mask = e.sigMask, !sig.isEmpty else { return e.addr }
+        let hits = scan(fileData: fileData, range: sliceOffset..<(sliceOffset + sliceSize),
+                        sig: sig, mask: mask)
+        if hits.count == 1 {
+            let va = sliceVMAddr + (UInt64(hits[0]) - sliceOffset)
+            let note = va == e.addr ? "== addr" : "!= addr(0x\(String(e.addr, radix: 16)))"
+            print("[\(archName)] sig hit @ 0x\(String(va, radix: 16)) \(note)")
+            return va
+        }
+        print("[\(archName)] sig \(hits.isEmpty ? "not found" : "ambiguous(\(hits.count))") → fallback addr 0x\(String(e.addr, radix: 16))")
+        return e.addr
+    }
+
+    /// 带通配的特征码扫描，返回文件内偏移列表
+    private static func scan(fileData: Data, range: Range<UInt64>,
+                             sig: Data, mask: Data) -> [Int] {
+        let n = sig.count
+        let start = Int(range.lowerBound)
+        let end = min(Int(range.upperBound), fileData.count)
+        guard n > 0, start >= 0, end - start >= n else { return [] }
+        var hits: [Int] = []
+        fileData.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+            let base = raw.bindMemory(to: UInt8.self).baseAddress!
+            sig.withUnsafeBytes { (sp: UnsafeRawBufferPointer) in
+                mask.withUnsafeBytes { (mp: UnsafeRawBufferPointer) in
+                    let s = sp.bindMemory(to: UInt8.self).baseAddress!
+                    let m = mp.bindMemory(to: UInt8.self).baseAddress!
+                    // 用第 0 字节做快速过滤（要求精确）
+                    let anchor = m[0] == 0xFF ? s[0] : nil
+                    var i = start
+                    let last = end - n
+                    while i <= last {
+                        if let a = anchor, base[i] != a { i += 1; continue }
+                        var ok = true
+                        for k in 0..<n where (base[i + k] & m[k]) != (s[k] & m[k]) { ok = false; break }
+                        if ok {
+                            hits.append(i)
+                            if hits.count > 8 { return }   // 明显不唯一，提前退出
+                        }
+                        i += 1
+                    }
+                }
+            }
+        }
+        return hits
+    }
+
+    // MARK: - 写入
+
     private static func patchOneSlice(file fh: FileHandle,
                                       sliceOffset: UInt64,
                                       targetVA: UInt64,
                                       patch: Data,
+                                      expected: Data?,
                                       archName: String) throws {
 
         // 读 slice 内 mach_header_64
@@ -146,6 +246,18 @@ struct Patcher {
                     let fileOffset = sliceOffset + fileoff + (targetVA - vmaddr)
                     print("[\(archName)] vmaddr=\(String(format: "0x%llx", vmaddr)), fileoff=\(String(format: "0x%llx", fileoff)), sliceoff=\(String(format: "0x%llx", sliceOffset))")
                     print("[\(archName)] patch VA=\(String(format: "0x%llx", targetVA)), fileoff=\(String(format: "0x%llx", fileOffset))")
+
+                    // 写入前校验原始字节（防止版本漂移打错位置）
+                    if let exp = expected, !exp.isEmpty {
+                        try fh.seek(toOffset: fileOffset)
+                        let cur = try fh.read(upToCount: exp.count) ?? Data()
+                        if cur != exp {
+                            print("[\(archName)] ⚠️ expected 不匹配 @ \(String(format: "0x%llx", targetVA))："
+                                  + "期望 \(exp.map { String(format: "%02x", $0) }.joined())，"
+                                  + "实际 \(cur.map { String(format: "%02x", $0) }.joined()) → 跳过")
+                            return
+                        }
+                    }
 
                     try fh.seek(toOffset: fileOffset)
                     try fh.write(contentsOf: patch)

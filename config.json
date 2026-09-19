@@ -1120,6 +1120,54 @@
           }
         ],
         "binary": "Contents/Resources/wechat.dylib"
+      },
+      {
+        "identifier": "blockUpdate",
+        "entries": [
+          {
+            "arch": "x86_64",
+            "addr": "2B8BB0",
+            "asm": "C3",
+            "sig": "554889e54157415641554154534881ecc80100004889fb488b05ba4c",
+            "expected": "554889e5"
+          },
+          {
+            "arch": "x86_64",
+            "addr": "2BB560",
+            "asm": "C3",
+            "sig": "554889e54156534883ec304189d64889fb48be00",
+            "expected": "554889e5"
+          },
+          {
+            "arch": "x86_64",
+            "addr": "2BAC70",
+            "asm": "C3",
+            "sig": "554889e54157415641554154534881ec680100004889fb488b05fa2b",
+            "expected": "554889e5"
+          },
+          {
+            "arch": "x86_64",
+            "addr": "2BEE20",
+            "asm": "C3",
+            "sig": "554889e54156534881ec500100004889d7488b05",
+            "expected": "554889e5"
+          },
+          {
+            "arch": "x86_64",
+            "addr": "2BB240",
+            "asm": "C3",
+            "sig": "554889e541574156534881ec480100004889fb488b052e26",
+            "expected": "554889e5"
+          },
+          {
+            "arch": "x86_64",
+            "addr": "2BB9C0",
+            "asm": "C3",
+            "sig": "554889e5415741564155415453504189d64889fb488b3565",
+            "expected": "554889e5"
+          }
+        ],
+        "binary": "Contents/Resources/wechat.dylib"
       }
     ]
   }

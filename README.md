@@ -10,7 +10,8 @@ A command-line tool for tweaking WeChat.
 
 - 阻止消息撤回
 - 客户端多开
-- 撤回提示增强（x86_64 运行时组件，随 app 自动加载）：`[已拦截] "坦然" 撤回了一条消息【原文】`，支持自定义模板
+- 撤回提示增强（x86_64 运行时组件，随 app 自动加载）：`[已拦截] "XX" 撤回了一条消息【原文】`，支持自定义模板
+- 屏蔽微信自动更新（可选，`--block-update`）：打补丁后不再被自动升级覆盖
 
 ## 说明
 
@@ -40,6 +41,9 @@ brew upgrade tanranv5/tap/wechattweak
 # 执行 Patch（默认目标是 /Applications/WeChat.app，可用 --app 覆盖）
 wechattweak patch
 
+# 屏蔽微信自动更新（可选；打了之后微信不会再自动升级覆盖补丁）
+wechattweak patch --block-update
+
 # 显式指定 tanranv5 仓库的 config.json
 wechattweak patch -c https://raw.githubusercontent.com/tanranv5/WeChatTweak/refs/heads/master/config.json
 
@@ -48,6 +52,9 @@ open -n /Applications/WeChat.app
 
 # 查看当前 WeChat 版本 + 支持列表
 wechattweak versions
+
+# 从备份还原成官方原版（patch 时自动备份）
+wechattweak restore
 ```
 
 ### 微信更新后怎么办
@@ -85,14 +92,14 @@ make build
 在静默防撤回的基础上，额外显示撤回提示和原文：
 
 ```
-[已拦截] "坦然" 撤回了一条消息【原文内容】
+[已拦截] "XX" 撤回了一条消息【原文内容】
 ```
 
 - 原消息保留 + 提示显示，两者兼得（静态补丁只能二选一，这是运行时组件）
 - 发送者、时间、原文均可在模板里自定义
 - 作为组件**直接装进微信 app**（通过 `LC_LOAD_WEAK_DYLIB` 注入），从 Dock / 启动台正常打开微信即自动生效，**不需要**每次手动注入
 
-### 使用（一条命令）
+### 使用
 
 ```bash
 # 打完静态补丁的同时把撤回提示组件也装进 app，并写好默认模板
@@ -107,7 +114,6 @@ wechattweak patch --tip "[已拦截] {from} 于 {time} 撤回了：{content}"
 
 ### 自定义提示
 
-模板写在 `~/wxrevoketip.conf`。微信重签名后运行时 `$HOME` 会自动指向正确位置（沙盒下是容器目录，非沙盒下是真实主目录），组件都读这个路径，无需手动区分：
 
 ```
 tip=[已拦截] {from} 撤回了：{content}
@@ -124,16 +130,6 @@ tip=[已拦截] {from} 撤回了：{content}
 
 > 环境变量 `WXRT_TIP` / `WXRT_MARKER` 可覆盖配置文件，空串不覆盖默认值。
 
-### 实现要点
-
-- dylib 启动时**按字节特征码自动定位**两个 hook（撤回 parser + 收消息 finalizer），小版本地址漂移无需改代码（见 `ADAPT_X64.md` 第 9 节）
-- 检测到磁盘上的静态 revoke 补丁会**在内存里还原其被改掉的函数序言**，再挂 hook，避免回溯定位越界
-- 组件随 app 一起重签名，日志在 `~/wxrevoketip.log`
-
-已知限制：
-
-- 原文只在**本次微信启动后收到**的消息上有（内存缓存，重启即空；空时自动省略 `{content}` 段）
-- 微信大版本升级后可能需要按特征码流程复核 hook 地址（当前适配 `270098`，x86_64）
 
 ## 参考
 

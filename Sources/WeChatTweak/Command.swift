@@ -27,6 +27,131 @@ struct Command {
     /// `patch` 阶段抓到的 entitlements 临时文件，供随后的 `resign` 使用
     nonisolated(unsafe) private static var capturedEntitlements: String?
 
+    /// 备份根目录：~/Library/Application Support/WeChatTweak/backup/<version>/
+    static func backupDir(version: String) -> URL {
+        URL(fileURLWithPath: NSString(string: "~/Library/Application Support/WeChatTweak/backup/\(version)").expandingTildeInPath)
+    }
+
+    private static func listRegularFiles(in dir: URL) -> [URL] {
+        guard let enumerator = FileManager.default.enumerator(
+            at: dir, includingPropertiesForKeys: [.isRegularFileKey]) else { return [] }
+        var files: [URL] = []
+        for case let url as URL in enumerator {
+            if (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true {
+                files.append(url)
+            }
+        }
+        return files
+    }
+
+    /// 同步 sleep（async 上下文里 Thread.sleep 不可用）
+    private static func sleepSeconds(_ s: Double) {
+        var req = timespec(tv_sec: time_t(s), tv_nsec: Int((s - Double(Int(s))) * 1_000_000_000))
+        var rem = timespec()
+        while nanosleep(&req, &rem) != 0 { req = rem }
+    }
+
+    /// patch 前把将要修改的二进制备份下来（按 app 内相对路径存放）。
+    /// 已存在的备份不覆盖 —— 备份必须永远是原版，重复 patch 也不会污染。
+    /// ⚠️ 主二进制（Contents/MacOS/WeChat）特殊：它会被 LC 注入修改，因此
+    ///    备份前必须校验「不含我们的 LC」，否则拒绝备份（防止把补丁后的文件当原版存）。
+    static func backupBinaries(app: URL, version: String, binaries: [String]) throws {
+        let fm = FileManager.default
+        let dir = backupDir(version: version)
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        for rel in binaries {
+            let dst = dir.appendingPathComponent(rel)
+            guard !fm.fileExists(atPath: dst.path) else {
+                print("Backup exists, keep original: \(dst.path)")
+                continue
+            }
+            let src = app.appendingPathComponent(rel)
+            // 防污染闸：文件里已有我们注入的痕迹 → 它不是原版，不能存为备份。
+            // 两个特征：① LC 注入的 "wxrevoketip" 字符串；② 静态 revoke 补丁的
+            // 「mov eax,1; ret」序言形态（b8 01 00 00 00 c3，紧随其后的字节仍是序言尾巴）。
+            if let data = try? Data(contentsOf: src, options: .mappedIfSafe) {
+                if data.range(of: Data("wxrevoketip".utf8)) != nil {
+                    throw Tweak.Error.backupSourceTainted(path: src.path)
+                }
+                // 静态补丁只打在 wechat.dylib（3 个 revoke 入口之一）。粗查全文件即可。
+                if rel.hasSuffix("wechat.dylib"),
+                   data.range(of: Data([0xB8, 0x01, 0x00, 0x00, 0x00, 0xC3])) != nil {
+                    throw Tweak.Error.backupSourceTainted(path: src.path)
+                }
+            }
+            try fm.createDirectory(at: dst.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fm.copyItem(at: src, to: dst)
+            print("Backup: \(src.path) -> \(dst.path)")
+        }
+    }
+
+    /// 一键还原：退出微信 → 用备份覆盖回去 → 删除注入的 dylib。
+    /// 备份文件是腾讯原签名，覆盖后 app 恢复官方状态（签名随内容自动恢复有效）。
+    static func restore(app: URL) async throws {
+        let fm = FileManager.default
+        let version = (try? await Command.version(app: app)) ?? "unknown"
+        let dir = backupDir(version: version)
+
+        guard fm.fileExists(atPath: dir.path) else {
+            throw Tweak.Error.backupNotFound(version: version, path: dir.path)
+        }
+
+        print("------ Quit WeChat ------")
+        // NSAppleScript 不支持 shell 语法（重定向/分号），退出和清理分开做；
+        // Thread.sleep 在 async 上下文不可用，用同步的 sleepSeconds
+        try? await Command.execute(command: "osascript -e 'quit app id \"com.tencent.xinWeChat\"'")
+        Command.sleepSeconds(3)
+        try? await Command.execute(command: "pkill -9 -f '\(app.path)/Contents/MacOS/WeChat'")
+        Command.sleepSeconds(1)
+
+        print("------ Restore binaries ------")
+        // FileManager.enumerator 不能在 async 上下文里直接迭代，先在同步函数里收齐文件列表
+        let backupFiles = listRegularFiles(in: dir)
+        if backupFiles.isEmpty {
+            throw Tweak.Error.backupNotFound(version: version, path: dir.path)
+        }
+        var restored = 0
+        for backup in backupFiles {
+            let rel = String(backup.path.dropFirst(dir.path.count + 1))
+            let dst = app.appendingPathComponent(rel)
+            guard fm.fileExists(atPath: dst.path) else {
+                print("Skip (not in app): \(rel)")
+                continue
+            }
+            try fm.removeItem(at: dst)
+            try fm.copyItem(at: backup, to: dst)
+            print("Restored: \(rel)")
+            restored += 1
+        }
+
+        print("------ Remove runtime dylib ------")
+        let dylib = app.appendingPathComponent("Contents/Resources/libwxrevoketip.dylib")
+        if fm.fileExists(atPath: dylib.path) {
+            try fm.removeItem(at: dylib)
+            print("Removed: \(dylib.path)")
+        } else {
+            print("Runtime dylib not present, skip")
+        }
+
+        if restored == 0 {
+            print("⚠️  没有还原任何文件，请检查备份目录: \(dir.path)")
+        }
+
+        // ★ 还原后必须重签：备份里主二进制嵌的是我们早前的 adhoc 签名（腾讯原始签名
+        //   在第一次 patch 重签时就被覆盖了，不可恢复）。只还原内容会让「签名 seal」
+        //   与内容不匹配 → macOS 拒绝启动（踩过：还原后微信打不开）。
+        print("------ Resign ------")
+        let entitlements = try await Command.dumpEntitlements(app: app)
+        var command = "codesign --force --deep --sign -"
+        if let e = entitlements { command += " --entitlements \(e)" }
+        command += " \(app.path)"
+        try await Command.execute(command: command)
+        try await Command.execute(command: "xattr -cr \(app.path) 2>/dev/null; true")
+
+        print("Done! \(restored) file(s) restored from \(dir.path)")
+        print("WeChat 已还原为原版功能（已重签，可直接启动）。")
+    }
+
     static func patch(app: URL, config: Config) async throws {
         let defaultBinary = "Contents/MacOS/WeChat"
         let grouped = Dictionary(grouping: config.targets) { target in
@@ -36,6 +161,13 @@ struct Command {
         // 必须在改动任何二进制之前抓 entitlements：
         // 一旦 app 被改动，其签名失效，codesign 就取不到 entitlements 了。
         capturedEntitlements = try await dumpEntitlements(app: app)
+
+        // patch 前备份将要修改的二进制（供 restore 一键还原）。
+        // 主二进制即使 config 不打它，--tip 的 LC 注入也会改它，必须一并备份。
+        var toBackup = Set(grouped.keys)
+        toBackup.insert(defaultBinary)
+        try Command.backupBinaries(app: app, version: config.version,
+                                   binaries: toBackup.sorted())
 
         for (binary, targets) in grouped {
             let binaryURL = app.appendingPathComponent(binary)
@@ -139,17 +271,19 @@ struct Command {
             print("Runtime dylib already linked, skip LC injection")
         }
 
-        // 4. 写模板配置。组件按运行时 $HOME 读 ~/wxrevoketip.conf：
-        //    - 非沙盒（重签名没带 sandbox entitlement）：$HOME = 真实主目录
-        //    - 沙盒（patch 流程会把原始 entitlements 重新签回，含 sandbox）：$HOME 自动映射到容器 Data 目录
-        //    两处都写，无论哪种情况组件都能读到模板。
-        let homeConf = URL(fileURLWithPath: NSString(string: "~/wxrevoketip.conf").expandingTildeInPath)
-        let containerConf = URL(fileURLWithPath: NSString(string: "~/Library/Containers/com.tencent.xinWeChat/Data/wxrevoketip.conf").expandingTildeInPath)
-        try FileManager.default.createDirectory(at: containerConf.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let content = "tip=\(template)\n"
-        try content.write(to: homeConf, atomically: true, encoding: .utf8)
-        try? content.write(to: containerConf, atomically: true, encoding: .utf8)
-        print("Tip template written: \(homeConf.path)")
+        // 4. 写模板配置。组件运行时按 $HOME 读 ~/wxrevoketip.conf：
+        //    - 沙盒（patch 会把原始 entitlements 重签回，含 sandbox）：$HOME 映射到容器 Data 目录
+        //    - 非沙盒：$HOME = 真实主目录
+        //    只写实际会被读取的那一处；写另一处只会留下一个永远读不到的文件。
+        let containerData = URL(fileURLWithPath: NSString(string: "~/Library/Containers/com.tencent.xinWeChat/Data").expandingTildeInPath)
+        let confURL: URL
+        if FileManager.default.fileExists(atPath: containerData.path) {
+            confURL = containerData.appendingPathComponent("wxrevoketip.conf")
+        } else {
+            confURL = URL(fileURLWithPath: NSString(string: "~/wxrevoketip.conf").expandingTildeInPath)
+        }
+        try "tip=\(template)\n".write(to: confURL, atomically: true, encoding: .utf8)
+        print("Tip template written: \(confURL.path)")
     }
 
     /// 把 app 当前的 entitlements 导出到临时文件；取不到时返回 nil

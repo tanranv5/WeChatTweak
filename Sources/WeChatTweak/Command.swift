@@ -24,9 +24,6 @@ struct Command {
         try await Command.execute(command: "defaults read \(app.appendingPathComponent("Contents/Info.plist").path) CFBundleVersion")
     }
 
-    /// `patch` 阶段抓到的 entitlements 临时文件，供随后的 `resign` 使用
-    nonisolated(unsafe) private static var capturedEntitlements: String?
-
     /// 备份根目录：~/Library/Application Support/WeChatTweak/backup/<version>/
     static func backupDir(version: String) -> URL {
         URL(fileURLWithPath: NSString(string: "~/Library/Application Support/WeChatTweak/backup/\(version)").expandingTildeInPath)
@@ -141,12 +138,7 @@ struct Command {
         //   在第一次 patch 重签时就被覆盖了，不可恢复）。只还原内容会让「签名 seal」
         //   与内容不匹配 → macOS 拒绝启动（踩过：还原后微信打不开）。
         print("------ Resign ------")
-        let entitlements = try await Command.dumpEntitlements(app: app)
-        var command = "codesign --force --deep --sign -"
-        if let e = entitlements { command += " --entitlements \(e)" }
-        command += " \(app.path)"
-        try await Command.execute(command: command)
-        try await Command.execute(command: "xattr -cr \(app.path) 2>/dev/null; true")
+        try await Command.resign(app: app)
 
         print("Done! \(restored) file(s) restored from \(dir.path)")
         print("WeChat 已还原为原版功能（已重签，可直接启动）。")
@@ -157,10 +149,6 @@ struct Command {
         let grouped = Dictionary(grouping: config.targets) { target in
             target.binary ?? defaultBinary
         }
-
-        // 必须在改动任何二进制之前抓 entitlements：
-        // 一旦 app 被改动，其签名失效，codesign 就取不到 entitlements 了。
-        capturedEntitlements = try await dumpEntitlements(app: app)
 
         // patch 前备份将要修改的二进制（供 restore 一键还原）。
         // 主二进制即使 config 不打它，--tip 的 LC 注入也会改它，必须一并备份。
@@ -184,15 +172,23 @@ struct Command {
     }
 
     static func resign(app: URL) async throws {
-        var command = "codesign --force --deep --sign -"
-        if let entitlements = capturedEntitlements {
-            command += " --entitlements \(entitlements)"
-        }
-        command += " \(app.path)"
-        try await Command.execute(command: command)
-        // xattr 清理尽力而为：个别只读文件（如 gpu_shader_cache.bin，mode 444）清不动，
-        // 不能因此让整个 patch 失败（此时签名已生效）。用 `; true` 吞掉非零退出。
-        try await Command.execute(command: "xattr -cr \(app.path) 2>/dev/null; true")
+        // ★ 只能用 --preserve-metadata=entitlements，**不能**传 --entitlements <某文件>：
+        //   `--deep` 会把 --entitlements 指定的那一份 entitlements **盖到所有嵌套二进制**上。
+        //   嵌套 helper（WeChatAppEx / WeChatHelper / XPlayer / *.appex / *.xpc）各有自己的
+        //   entitlements（多为 app-sandbox + inherit，且**不带** application-identifier）；
+        //   一旦被盖上主 app 的 application-identifier（5A4RE8SF68.com.tencent.xinWeChat），
+        //   就与该 helper 自身的 code identifier 不符 → 沙盒初始化 _libsecinit_appsandbox
+        //   直接 SIGILL → 小程序 / 视频播放 / 分享扩展启动即崩（踩过）。
+        //   --preserve-metadata=entitlements 保留每个二进制**自己的** entitlements，实测
+        //   在二进制已被改动（嵌入签名失效）后依然能正确读到。
+        try await Command.execute(command:
+            "codesign --force --deep --sign - --preserve-metadata=entitlements \(app.path)")
+        // ★ 只清 quarantine，绝不能用 `xattr -cr`：它会连非 Mach-O 文件的 xattr 代码签名
+        //   一起抹掉（例如 XPlayer.app/Contents/Frameworks/vk_swiftshader_icd.json 的签名
+        //   就存在 xattr 里），导致下次 `--deep` 重签报
+        //   "code object is not signed at all" 而失败。
+        //   个别只读文件清不动属正常，用 `; true` 吞掉非零退出（签名已生效）。
+        try await Command.execute(command: "xattr -r -d com.apple.quarantine \(app.path) 2>/dev/null; true")
     }
 
     /// 运行时组件（libwxrevoketip.dylib / add_load_dylib.py）的搜索目录，覆盖三种布局：
@@ -284,22 +280,6 @@ struct Command {
         }
         try "tip=\(template)\n".write(to: confURL, atomically: true, encoding: .utf8)
         print("Tip template written: \(confURL.path)")
-    }
-
-    /// 把 app 当前的 entitlements 导出到临时文件；取不到时返回 nil
-    private static func dumpEntitlements(app: URL) async throws -> String? {
-        let path = NSTemporaryDirectory() + "wechattweak-entitlements-\(UUID().uuidString).plist"
-        do {
-            try await Command.execute(command: "codesign -d --entitlements :- \(app.path) > \(path)")
-        } catch {
-            return nil
-        }
-        guard let attributes = try? FileManager.default.attributesOfItem(atPath: path),
-              let size = attributes[.size] as? NSNumber,
-              size.intValue > 0 else {
-            return nil
-        }
-        return path
     }
 
     @discardableResult

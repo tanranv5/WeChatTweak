@@ -11,7 +11,8 @@
 //        if (al==0 || flag==1) -> sub_537EF30(msg, &replaceMsg)  执行撤回
 //        else                  -> return 1                        静默防撤回
 //
-//    本组件在 parser 入口（VA 0x537DAD0）下 inline hook：
+//    本组件在 parser 入口下 inline hook（VA：270100 = 0x537DCD0，270098 = 0x537DAD0；
+//    下方反汇编片段取自 270098，两版函数体一致、仅整体位移 +0x200）：
 //      · 入口 13 字节序言整体替换为  movabs rax,<wrapper> ; jmp rax ; nop
 //      · 原序言拷进 trampoline，尾部  FF 25 rel32 + 绝对地址  跳回 entry+13
 //      · wrapper 调用原函数后，按开关给 msg+0x1D0（提示文案 std::string）加标记
@@ -46,8 +47,8 @@
 //   正常情况不用改：两个 hook 地址靠特征码运行时自定位（见 find_hook_targets）。
 //   特征码失配时（微信大改），才回退到下面的硬编码 VA。
 // ---------------------------------------------------------------------------
-static const uintptr_t kParserVA      = 0x537DAD0;   // 撤回 parser 入口 VA（270098 兜底）
-static const uintptr_t kFinalizerVA   = 0x530C9F0;   // message.cc finalizer（270098 兜底）
+static const uintptr_t kParserVA      = 0x537DCD0;   // 撤回 parser 入口 VA（270100 兜底）
+static const uintptr_t kFinalizerVA   = 0x530CBF0;   // message.cc finalizer（270100 兜底）
 static const size_t    kPrologueLen   = 13;          // 被覆盖的序言长度
 static const char*     kImageNeedle   = "wechat.dylib";
 

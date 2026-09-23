@@ -70,9 +70,13 @@ struct Command {
                 if data.range(of: Data("wxrevoketip".utf8)) != nil {
                     throw Tweak.Error.backupSourceTainted(path: src.path)
                 }
-                // 静态补丁只打在 wechat.dylib（3 个 revoke 入口之一）。粗查全文件即可。
+                // 静态 revoke 补丁形态：b8 01 00 00 00 c3 + 序言尾巴 41 56 41 55 41 54 53（共 13B）。
+                // ★ 判据必须带序言尾巴：只看 6 字节的「mov eax,1; ret」在原版 wechat.dylib 里
+                //   就有 56 处（常见指令序列），必然误报 —— 曾导致新版本首次 patch 被自己拦住
+                //   （只有「备份已存在」时跳过检查才侥幸没炸）。
                 if rel.hasSuffix("wechat.dylib"),
-                   data.range(of: Data([0xB8, 0x01, 0x00, 0x00, 0x00, 0xC3])) != nil {
+                   data.range(of: Data([0xB8, 0x01, 0x00, 0x00, 0x00, 0xC3,
+                                        0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53])) != nil {
                     throw Tweak.Error.backupSourceTainted(path: src.path)
                 }
             }

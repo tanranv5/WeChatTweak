@@ -49,9 +49,10 @@ extension Tweak {
 
         @Flag(
             name: .long,
-            help: "Block WeChat auto-update (patch Sparkle updater entry points; 微信将不再自动升级)"
+            inversion: .prefixedNo,
+            help: "屏蔽微信自动更新（**默认开启**）。加 --no-block-update 关闭，并撤销已打的屏蔽，让微信可重新自动升级"
         )
-        var blockUpdate: Bool = false
+        var blockUpdate: Bool = true
 
         mutating func run() async throws {
             print("------ Version ------")
@@ -64,11 +65,15 @@ extension Tweak {
             }
             print("Matched config: \(config)")
 
-            // 屏蔽自动更新是可选 target（默认不应用，避免影响想升级的用户）
-            let targets = config.targets.filter { blockUpdate || $0.identifier != "blockUpdate" }
+            // 屏蔽自动更新是默认行为；--no-block-update 时不仅不打，还会撤销已打的
+            let targets = blockUpdate
+                ? config.targets
+                : config.targets.filter { $0.identifier != "blockUpdate" }
             if blockUpdate {
                 let present = config.targets.contains { $0.identifier == "blockUpdate" }
-                print("Block auto-update: \(present ? "enabled" : "target missing in this version's config")")
+                print("Block auto-update: enabled\(present ? "(默认)" : "(该版本 config 无此 target，跳过)")")
+            } else {
+                print("Block auto-update: disabled (--no-block-update) → 将撤销已打的屏蔽")
             }
             let effectiveConfig = Config(version: config.version, targets: targets)
 
@@ -78,6 +83,12 @@ extension Tweak {
                 config: effectiveConfig
             )
             print("Done!")
+
+            if !blockUpdate {
+                print("------ Allow Update (revert blockUpdate) ------")
+                try await Command.revertBlockUpdate(app: options.app, config: config)
+                print("Done! (微信可重新自动升级；升级后 app 会被官方版本替换，需重新 patch)")
+            }
 
             if tip {
                 print("------ Revoke Tip Runtime ------")

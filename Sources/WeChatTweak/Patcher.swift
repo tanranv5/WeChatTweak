@@ -17,7 +17,23 @@ struct Patcher {
         case noArchMatched
     }
 
+    /// apply = 写入 `asm`；revert = 写回 `expected`（原始字节）
+    enum Mode {
+        case apply
+        case revert
+    }
+
     static func patch(binary: URL, config: Config) throws {
+        try run(binary: binary, config: config, mode: .apply)
+    }
+
+    /// 撤销补丁。只有带 `expected` 的条目可撤销（expected 就是它原本的字节）。
+    /// 追加安全闸：只在"当前字节 == 本工具写的补丁形态"时才写回，避免误改别的版本。
+    static func revert(binary: URL, config: Config) throws {
+        try run(binary: binary, config: config, mode: .revert)
+    }
+
+    private static func run(binary: URL, config: Config, mode: Mode) throws {
         guard FileManager.default.fileExists(atPath: binary.path) else {
             throw Error.invalidFile
         }
@@ -78,6 +94,7 @@ struct Patcher {
                                       targetVA: va,
                                       patch: target.asm,
                                       expected: target.expected,
+                                      mode: mode,
                                       archName: target.arch.rawValue)
                     patchedCount += 1
                 }
@@ -111,6 +128,7 @@ struct Patcher {
                                   targetVA: va,
                                   patch: target.asm,
                                   expected: target.expected,
+                                  mode: mode,
                                   archName: target.arch.rawValue)
                 patchedCount += 1
             }
@@ -207,6 +225,7 @@ struct Patcher {
                                       targetVA: UInt64,
                                       patch: Data,
                                       expected: Data?,
+                                      mode: Mode,
                                       archName: String) throws {
 
         // 读 slice 内 mach_header_64
@@ -247,20 +266,39 @@ struct Patcher {
                     print("[\(archName)] vmaddr=\(String(format: "0x%llx", vmaddr)), fileoff=\(String(format: "0x%llx", fileoff)), sliceoff=\(String(format: "0x%llx", sliceOffset))")
                     print("[\(archName)] patch VA=\(String(format: "0x%llx", targetVA)), fileoff=\(String(format: "0x%llx", fileOffset))")
 
-                    // 写入前校验原始字节（防止版本漂移打错位置）
-                    if let exp = expected, !exp.isEmpty {
-                        try fh.seek(toOffset: fileOffset)
-                        let cur = try fh.read(upToCount: exp.count) ?? Data()
-                        if cur != exp {
-                            print("[\(archName)] ⚠️ expected 不匹配 @ \(String(format: "0x%llx", targetVA))："
-                                  + "期望 \(exp.map { String(format: "%02x", $0) }.joined())，"
-                                  + "实际 \(cur.map { String(format: "%02x", $0) }.joined()) → 跳过")
+                    // 读足够长做比较：`patch` 与 `expected` 长度可能不同（如 1B 补丁 vs 4B 原版）
+                    let probe = max(patch.count, expected?.count ?? 0)
+                    let cur = readBytes(fh, at: fileOffset, count: probe)
+
+                    switch mode {
+                    case .apply:
+                        // 写入前校验原始字节（防止版本漂移打错位置）
+                        if let exp = expected, !exp.isEmpty, Data(cur.prefix(exp.count)) != exp {
+                            print("[\(archName)] ⚠️ expected 不匹配 @ \(fmt(targetVA))："
+                                  + "期望 \(hex(exp))，实际 \(hex(cur)) → 跳过")
                             return
                         }
-                    }
+                        try fh.seek(toOffset: fileOffset)
+                        try fh.write(contentsOf: patch)
+                        print("[\(archName)] patched @ \(fmt(targetVA)) → \(hex(patch))")
 
-                    try fh.seek(toOffset: fileOffset)
-                    try fh.write(contentsOf: patch)
+                    case .revert:
+                        guard let exp = expected, !exp.isEmpty else {
+                            print("[\(archName)] ⚠️ 该条目没有 expected，无法撤销 @ \(fmt(targetVA)) → 跳过")
+                            return
+                        }
+                        if Data(cur.prefix(patch.count)) == patch {
+                            // 当前确实是本工具写的补丁形态 → 写回原字节
+                            try fh.seek(toOffset: fileOffset)
+                            try fh.write(contentsOf: exp)
+                            print("[\(archName)] reverted @ \(fmt(targetVA)) → \(hex(exp))")
+                        } else if Data(cur.prefix(exp.count)) == exp {
+                            print("[\(archName)] already original @ \(fmt(targetVA)) → 跳过")
+                        } else {
+                            print("[\(archName)] ⚠️ 当前字节既非补丁也非原版 @ \(fmt(targetVA))："
+                                  + "实际 \(hex(cur)) → 跳过")
+                        }
+                    }
                     return
                 }
             }
@@ -269,5 +307,20 @@ struct Patcher {
         }
 
         throw Error.vaNotFound(arch: archName, va: targetVA)
+    }
+
+    // MARK: - 小工具
+
+    private static func readBytes(_ fh: FileHandle, at offset: UInt64, count: Int) -> Data {
+        try? fh.seek(toOffset: offset)
+        return (try? fh.read(upToCount: count)).flatMap { $0 } ?? Data()
+    }
+
+    private static func hex(_ d: Data) -> String {
+        d.map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func fmt(_ va: UInt64) -> String {
+        "0x" + String(va, radix: 16)
     }
 }

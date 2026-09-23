@@ -11,7 +11,7 @@ A command-line tool for tweaking WeChat.
 - 阻止消息撤回
 - 客户端多开
 - 撤回提示增强（x86_64 运行时组件，随 app 自动加载）：`[已拦截] "XX" 撤回了一条消息【原文】`，支持自定义模板
-- 屏蔽微信自动更新（可选，`--block-update`）：打补丁后不再被自动升级覆盖
+- 屏蔽微信自动更新（**默认开启**）：打补丁后不再被自动升级覆盖；需要升级时用 `--no-block-update`
 
 ## 说明
 
@@ -41,8 +41,11 @@ brew upgrade tanranv5/tap/wechattweak
 # 执行 Patch（默认目标是 /Applications/WeChat.app，可用 --app 覆盖）
 wechattweak patch
 
-# 屏蔽微信自动更新（可选；打了之后微信不会再自动升级覆盖补丁）
-wechattweak patch --block-update
+# 默认即屏蔽自动更新（微信不会再自动升级覆盖补丁）
+wechattweak patch
+
+# 需要升级微信时：不屏蔽，并把已打的屏蔽撤销回原版
+wechattweak patch --no-block-update
 
 # 显式指定 tanranv5 仓库的 config.json
 wechattweak patch -c https://raw.githubusercontent.com/tanranv5/WeChatTweak/refs/heads/master/config.json
@@ -59,7 +62,8 @@ wechattweak restore
 
 ### 微信更新后怎么办
 
-微信自动更新会**覆盖已打的补丁**，所以每次微信升级后都要重新打一遍：
+`patch` **默认会屏蔽微信自动更新**，所以一般不会出现"被悄悄升级、补丁失效"的情况。
+一旦升级发生（你主动用 `--no-block-update` 放开、或手工装官方 dmg），**补丁会被整体覆盖**，需要重新打一遍：
 
 1. 确认当前版本是否已支持：`wechattweak versions`
 2. **建议先更新工具**：`brew upgrade tanranv5/tap/wechattweak`

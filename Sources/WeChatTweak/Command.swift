@@ -144,6 +144,23 @@ struct Command {
         print("WeChat 已还原为原版功能（已重签，可直接启动）。")
     }
 
+    /// 撤销「屏蔽自动更新」补丁：把 blockUpdate 的各入口字节写回原版，
+    /// 让微信能重新检查/下载更新。只有 config 里带 `expected` 的条目可撤销。
+    static func revertBlockUpdate(app: URL, config: Config) async throws {
+        guard let target = config.targets.first(where: { $0.identifier == "blockUpdate" }) else {
+            print("⚠️  当前版本 config 里没有 blockUpdate，无需撤销")
+            return
+        }
+        let binaryRel = target.binary ?? "Contents/MacOS/WeChat"
+        let binaryURL = app.appendingPathComponent(binaryRel)
+        try Patcher.revert(binary: binaryURL,
+                           config: Config(version: config.version, targets: [target]))
+        // 二进制内容变了 → 嵌入签名失效，必须重签，否则 WCDYWrapper 完整性校验会让启动失败
+        if binaryRel != "Contents/MacOS/WeChat" {
+            try await Command.execute(command: "codesign --force --sign - \(binaryURL.path)")
+        }
+    }
+
     static func patch(app: URL, config: Config) async throws {
         let defaultBinary = "Contents/MacOS/WeChat"
         let grouped = Dictionary(grouping: config.targets) { target in

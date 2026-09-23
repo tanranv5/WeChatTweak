@@ -88,7 +88,7 @@ make build
 
 ## 最新适配
 
-- `wx.app (4.1.15 / 270098)` 当前最新
+- `wx.app (4.1.15 / 270100)` 当前最新（另支持 270098）
 - 历史版本下载：https://github.com/canc3s/wechat-versions/releases
 
 ## 撤回提示增强

@@ -111,7 +111,8 @@ make build
 wechattweak patch --tip
 
 # 自定义模板（可选，改完重启微信即可）
-wechattweak patch --tip "[已拦截] {from} 于 {time} 撤回了：{content}"
+# 注意：--tip 是开关（不带值），模板要用 --tip-template 传
+wechattweak patch --tip --tip-template "[已拦截] {from} 于 {time} 撤回了：{content}"
 ```
 
 组件加载后默认即生效（`apply=1`）。如需临时关闭：`WXRT_APPLY=0` 环境变量，或在配置文件里写 `marker=`。

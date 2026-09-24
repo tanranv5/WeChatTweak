@@ -263,8 +263,9 @@ struct Patcher {
 
                 if vmaddr <= targetVA && targetVA < vmaddr + vmsize {
                     let fileOffset = sliceOffset + fileoff + (targetVA - vmaddr)
-                    print("[\(archName)] vmaddr=\(String(format: "0x%llx", vmaddr)), fileoff=\(String(format: "0x%llx", fileoff)), sliceoff=\(String(format: "0x%llx", sliceOffset))")
-                    print("[\(archName)] patch VA=\(String(format: "0x%llx", targetVA)), fileoff=\(String(format: "0x%llx", fileOffset))")
+                    // 调试用（WXRT_DEBUG=1 打开）；普通用户看不懂这些，默认静音
+                    debugLog("[\(archName)] vmaddr=\(String(format: "0x%llx", vmaddr)), fileoff=\(String(format: "0x%llx", fileoff)), sliceoff=\(String(format: "0x%llx", sliceOffset))")
+                    debugLog("[\(archName)] patch VA=\(String(format: "0x%llx", targetVA)), fileoff=\(String(format: "0x%llx", fileOffset))")
 
                     // 读足够长做比较：`patch` 与 `expected` 长度可能不同（如 1B 补丁 vs 4B 原版）
                     let probe = max(patch.count, expected?.count ?? 0)
@@ -273,10 +274,19 @@ struct Patcher {
                     switch mode {
                     case .apply:
                         // 写入前校验原始字节（防止版本漂移打错位置）
-                        if let exp = expected, !exp.isEmpty, Data(cur.prefix(exp.count)) != exp {
-                            print("[\(archName)] ⚠️ expected 不匹配 @ \(fmt(targetVA))："
-                                  + "期望 \(hex(exp))，实际 \(hex(cur)) → 跳过")
-                            return
+                        if let exp = expected, !exp.isEmpty {
+                            if Data(cur.prefix(exp.count)) == exp {
+                                // 原版 → 正常写入（继续往下）
+                            } else if Data(cur.prefix(patch.count)) == patch {
+                                // 已经是本工具打的补丁 → 重复 patch 的正常情况，不是错误
+                                print("[\(archName)] 已是补丁状态 @ \(fmt(targetVA)) → 跳过（正常）")
+                                return
+                            } else {
+                                // 既不是原版也不是本工具的补丁 → 版本/地址对不上，不猜，跳过
+                                print("[\(archName)] ⚠️ 目标处字节既非原版也非本工具的补丁 @ \(fmt(targetVA))："
+                                      + "期望 \(hex(exp))，实际 \(hex(cur)) → 跳过（此版本可能还没适配）")
+                                return
+                            }
                         }
                         try fh.seek(toOffset: fileOffset)
                         try fh.write(contentsOf: patch)
@@ -310,6 +320,12 @@ struct Patcher {
     }
 
     // MARK: - 小工具
+
+    /// 调试输出开关：只有设了 WXRT_DEBUG=1 才打印（普通用户不需要看 vmaddr/fileoff 这些）
+    private static func debugLog(_ message: String) {
+        guard let v = getenv("WXRT_DEBUG"), v.pointee != 0 else { return }
+        print(message)
+    }
 
     private static func readBytes(_ fh: FileHandle, at offset: UInt64, count: Int) -> Data {
         try? fh.seek(toOffset: offset)

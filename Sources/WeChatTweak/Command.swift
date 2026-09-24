@@ -181,18 +181,24 @@ struct Command {
         for (binary, targets) in grouped {
             let binaryURL = app.appendingPathComponent(binary)
             let subConfig = Config(version: config.version, targets: targets)
+            print("------ Patch \(binary) ------")
             try Patcher.patch(binary: binaryURL, config: subConfig)
 
             // 嵌套二进制必须显式重签。`codesign --deep` 不会重签
             // Resources/wechat.dylib 这类大文件（实测 4.1.15+ 会保留腾讯原始签名），
             // 内容一改其嵌入签名即失效，WCDYWrapper 的完整性校验就会让 app 启动失败。
             if binary != defaultBinary {
+                // 大二进制（wechat.dylib 约 340MB）签名要几秒且全程无输出 —— 先说一声，免得被当成卡死
+                print("------ Sign \(binary)（无输出属正常，稍候）------")
                 try await Command.execute(command: "codesign --force --sign - \(binaryURL.path)")
             }
         }
     }
 
     static func resign(app: URL) async throws {
+        // 整包 `--deep` 重签要遍历全部嵌套二进制，1.4G 的 app 通常数十秒，全程无输出。
+        // 先说一声，免得被当成卡死（曾有人在这里等出疑问）。
+        print("  → 整包 codesign --deep 重签中（1.4G app 通常数十秒，无输出属正常）…")
         // ★ 只能用 --preserve-metadata=entitlements，**不能**传 --entitlements <某文件>：
         //   `--deep` 会把 --entitlements 指定的那一份 entitlements **盖到所有嵌套二进制**上。
         //   嵌套 helper（WeChatAppEx / WeChatHelper / XPlayer / *.appex / *.xpc）各有自己的

@@ -6,6 +6,38 @@
 
 A command-line tool for tweaking WeChat.
 
+## Native hot-patch guard
+
+An opt-in `hot-patch` command supports the inspected **268602** layout on
+arm64 and x86_64. It guards `Magic`/`Magicdy` artifact loading and WCDY's
+downloaded-code root while preserving bundled code loading.
+
+```sh
+make build hotpatch-runtime
+./wechattweak hot-patch status --app /Applications/WeChat.app
+./wechattweak hot-patch prepare --app /Applications/WeChat.app \
+  --output "$HOME/sources/WeChat-guarded.app"
+```
+
+Preparation creates a separate, signed app copy. It does not change or launch
+the source app. Other builds are rejected. Startup and guard interception
+have been verified on arm64 build 268602; fresh vendor patch delivery remains
+unverified. See [mechanism, scope, and tests](docs/hot-patch.md).
+
+## Mini Programs startup repair
+
+The optional `mini-program` command repairs the inspected build 268602 helper
+stall during crash-metadata setup. It preserves the hot-patch guard.
+
+```sh
+./wechattweak mini-program status
+./wechattweak mini-program prepare --app /Applications/WeChat.app \
+  --output "$HOME/sources/WeChat-mini-repaired.app"
+```
+
+See [cause, scope, and verification](docs/mini-program-repair.md).
+For either change, see [rollback and restore checks](docs/rollback.md).
+
 ## 功能
 
 - 阻止消息撤回

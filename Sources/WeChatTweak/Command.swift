@@ -246,7 +246,7 @@ struct Command {
         return dirs
     }
 
-    private static func firstExistingRuntimeAsset(_ name: String) -> URL? {
+    static func firstExistingRuntimeAsset(_ name: String) -> URL? {
         let fm = FileManager.default
         return runtimeAssetDirs()
             .map { $0.appendingPathComponent(name) }

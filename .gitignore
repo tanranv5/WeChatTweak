@@ -65,3 +65,4 @@ xcuserdata/
 /runtime/build/
 /dist/
 /wechattweak-v*-macos-universal.tar.gz
+__pycache__/

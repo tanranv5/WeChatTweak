@@ -1259,5 +1259,95 @@
         "binary": "Contents/Resources/wechat.dylib"
       }
     ]
+  },
+  {
+    "version": "270135",
+    "targets": [
+      {
+        "identifier": "wcdyIntegrityBypass",
+        "entries": [
+          {
+            "arch": "x86_64",
+            "addr": "8E03B",
+            "asm": "E93200000090",
+            "expected": "0f8431000000"
+          }
+        ],
+        "binary": "Contents/Frameworks/ld/WCDYWrapper.framework/Versions/A/WCDYWrapper"
+      },
+      {
+        "identifier": "revoke",
+        "entries": [
+          {
+            "arch": "x86_64",
+            "addr": "5503730",
+            "asm": "B801000000C3",
+            "expected": "554889e5"
+          }
+        ],
+        "binary": "Contents/Resources/wechat.dylib"
+      },
+      {
+        "identifier": "multiInstance",
+        "entries": [
+          {
+            "arch": "x86_64",
+            "addr": "3109F8",
+            "asm": "909090909090",
+            "sig": "0f84a30c0000e8????????4889c7",
+            "expected": "0f84a30c0000"
+          }
+        ],
+        "binary": "Contents/Resources/wechat.dylib"
+      },
+      {
+        "identifier": "blockUpdate",
+        "entries": [
+          {
+            "arch": "x86_64",
+            "addr": "2D0B60",
+            "asm": "C3",
+            "sig": "554889e54157415641554154534881ecc80100004889fb488b05????????488b00488945d0bf0200",
+            "expected": "554889e5"
+          },
+          {
+            "arch": "x86_64",
+            "addr": "2D3510",
+            "asm": "C3",
+            "sig": "554889e54156534883ec304189d64889fb48be00c817a80400000031ffe8",
+            "expected": "554889e5"
+          },
+          {
+            "arch": "x86_64",
+            "addr": "2D2C20",
+            "asm": "C3",
+            "sig": "554889e54157415641554154534881ec680100004889fb488b05????????488b00488945d00f2805a4b3c3080f298520",
+            "expected": "554889e5"
+          },
+          {
+            "arch": "x86_64",
+            "addr": "2D6D50",
+            "asm": "C3",
+            "sig": "554889e54156534881ec500100004889d7488b05????????488b00488945",
+            "expected": "554889e5"
+          },
+          {
+            "arch": "x86_64",
+            "addr": "2D31F0",
+            "asm": "C3",
+            "sig": "554889e541574156534881ec480100004889fb488b058e96320a488b00488945e0bf02000000e8????????85c00f8432",
+            "expected": "554889e5"
+          },
+          {
+            "arch": "x86_64",
+            "addr": "2D3970",
+            "asm": "C3",
+            "sig": "554889e5415741564155415453504189d64889fb488b35????????4c8b2d",
+            "expected": "554889e5"
+          }
+        ],
+        "binary": "Contents/Resources/wechat.dylib"
+      }
+    ]
   }
 ]

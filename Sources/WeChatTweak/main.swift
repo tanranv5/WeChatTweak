@@ -196,6 +196,8 @@ struct Tweak: AsyncParsableCommand {
         subcommands: [
             Versions.self,
             Patch.self,
+            HotPatch.self,
+            MiniProgram.self,
             Restore.self
         ]
     )
